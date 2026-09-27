@@ -118,11 +118,15 @@ def evaluate_returns(
     min_train: int = 500,
     step: int = 60,
     max_windows: Optional[int] = 500,
+    max_context: Optional[int] = None,
     series_key: str = "return",
 ) -> EvalResult:
     """Rolling-origin evaluation of a return forecaster. `horizon` is in bars. `cost_bps` is the
     round-trip cost used for the directional-hit-rate metric (same number `build_state` and
-    `direction_questions` use)."""
+    `direction_questions` use). `max_context`, if given, caps how much history each call gets
+    (the most recent `max_context` bars) -- bounds per-window cost for a forecaster whose fit
+    time grows with history (e.g. `GARCH11Forecaster`) regardless of how far into a long dataset
+    the rolling origin has walked; it never reaches into the future either way."""
     closes = bars["close"].astype(float).to_numpy()
     n = closes.shape[0]
     origins = _origins(n, max(min_train, _MIN_CONTEXT + 1), horizon, step, max_windows)
@@ -137,6 +141,8 @@ def evaluate_returns(
 
     for t in origins:
         context = closes[: t + 1]
+        if max_context is not None:
+            context = context[-(max_context + 1) :]
         log_ctx = log_return_series(context)
         if log_ctx.size < _MIN_CONTEXT:
             continue
@@ -199,11 +205,13 @@ def evaluate_volatility(
     min_train: int = 500,
     step: int = 60,
     max_windows: Optional[int] = 500,
+    max_context: Optional[int] = None,
     series_key: str = "vol",
 ) -> EvalResult:
     """Rolling-origin evaluation of a volatility forecaster. `horizon` is in bars *of the
     realized-vol series* (i.e. `realized_vol_series` steps, which are 1-step-return-aligned, so
-    a `horizon` of 15 means "15 bars ahead", same units as `evaluate_returns`)."""
+    a `horizon` of 15 means "15 bars ahead", same units as `evaluate_returns`). `max_context`
+    caps how much history each call gets, same rationale as in `evaluate_returns`."""
     closes = bars["close"].astype(float).to_numpy()
     rv = realized_vol_series(closes, vol_window)
     n = rv.shape[0]
@@ -217,6 +225,8 @@ def evaluate_volatility(
     for t in origins:
         hist = rv[: t + 1]
         hist = hist[~np.isnan(hist)]
+        if max_context is not None:
+            hist = hist[-max_context:]
         if hist.size < _MIN_CONTEXT:
             continue
         target_idx = t + horizon

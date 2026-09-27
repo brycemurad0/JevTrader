@@ -33,13 +33,28 @@ def test_random_walk_forecaster_skips_short_history():
     assert "r" not in out
 
 
-def test_random_walk_forecaster_scales_with_sqrt_horizon():
+def test_random_walk_forecaster_raw_output_is_flat_across_horizon():
+    # per-step marginal quantiles are i.i.d. -> flat; sqrt(h) widening is applied downstream by
+    # targets.cumulative_log_return_bps, not by this class (see its docstring).
     rng = np.random.default_rng(2)
     hist = rng.normal(0, 0.002, 1000)
     qf = RandomWalkForecaster().forecast({"r": hist}, horizon=9)["r"]
     q90 = qf.quantiles[0.9]
-    # widening should track sqrt(h) (h = 1..9): ratio of last/first ~ sqrt(9)/sqrt(1) = 3
-    assert q90[-1] / q90[0] == pytest.approx(3.0, rel=0.05)
+    assert np.allclose(q90, q90[0])
+
+
+def test_random_walk_cumulative_widens_like_sqrt_horizon():
+    rng = np.random.default_rng(2)
+    hist = rng.normal(0, 0.002, 1000)
+    qf = RandomWalkForecaster().forecast({"r": hist}, horizon=9)["r"]
+    cum = cumulative_log_return_bps(qf)
+    # log-scale cumulative quantile deviation from the point forecast should track sqrt(h):
+    # this checks the SAME sqrt(9)~=3 widening as before, but at the composed (cumulative)
+    # level where it actually belongs.
+    single_step = RandomWalkForecaster().forecast({"r": hist}, horizon=1)["r"]
+    cum1 = cumulative_log_return_bps(single_step)
+    ratio = (cum.quantile_at(0.9) - cum.point[0]) / (cum1.quantile_at(0.9) - cum1.point[0])
+    assert ratio == pytest.approx(3.0, rel=0.1)
 
 
 def test_random_walk_forecaster_calibrated_on_gbm_monte_carlo():
@@ -106,12 +121,14 @@ def test_fit_garch11_recovers_params_roughly():
     assert abs(fitted.beta - true.beta) < 0.25
 
 
-def test_garch11_forecaster_mean_reverts_toward_long_run_vol():
+def test_garch11_forecaster_mean_reverts_toward_its_fitted_long_run_vol():
     true = GarchParams(omega=2e-6, alpha=0.08, beta=0.85)
     r = _simulate_garch11(3000, true.omega, true.alpha, true.beta, seed=11)
+    fitted = fit_garch11(r, demean=True)  # GARCH11Forecaster demeans internally too
     qf = GARCH11Forecaster().forecast({"r": r}, horizon=50)["r"]
-    long_run_vol = math.sqrt(true.long_run_var)
-    # far-horizon forecast should be closer to the long-run vol than the 1-step forecast is
+    long_run_vol = math.sqrt(fitted.long_run_var)
+    # far-horizon forecast should be closer to the model's own long-run vol than the 1-step
+    # forecast is -- the defining property of a mean-reverting GARCH forecast path.
     assert abs(qf.point[-1] - long_run_vol) <= abs(qf.point[0] - long_run_vol) + 1e-6
 
 

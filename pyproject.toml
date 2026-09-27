@@ -24,6 +24,9 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["pytest>=8", "httpx>=0.27"]
+# TimesFM 2.5 (Apache-2.0) forecasting layer; on Apple Silicon use "timesfm[mlx]" instead
+forecast = ["timesfm[torch]>=2.0"]
+parquet = ["pyarrow>=15"]
 
 [project.scripts]
 jev = "jevtrader.cli:app"

@@ -6,8 +6,9 @@ of these needs a network call, a GPU, or even a slow fit -- they run in microsec
 milliseconds per symbol, so they're always available as a fallback and as the null hypothesis.
 
 - `RandomWalkForecaster`: the textbook honest baseline for *returns* -- zero expected drift,
-  quantiles from the series' own empirical return distribution scaled by sqrt(horizon) (a
-  Brownian-motion / i.i.d.-increments assumption).
+  flat per-step quantiles from the series' own empirical return distribution (i.i.d.
+  increments); composed with `targets.cumulative_log_return_bps` this produces the classic
+  sqrt(horizon)-widening cumulative-return quantile without double-counting it here too.
 - `EWMAVolForecaster`: RiskMetrics-style EWMA variance, forecast held flat over the horizon
   (a pure persistence forecast -- vol is much more persistent than returns, which is exactly
   why the honest prior expects a real edge here rather than for direction).
@@ -37,10 +38,21 @@ _MIN_HISTORY = 20
 
 @dataclass
 class RandomWalkForecaster:
-    """Zero-drift random walk over a *log-return* series. Quantiles are the series' own
-    empirical return quantiles, scaled by `sqrt(h)` for horizon step `h` (1-indexed) -- the
-    standard i.i.d.-increments scaling. `min_history` series shorter than this are skipped
-    (omitted from the result) rather than given a degenerate forecast."""
+    """Zero-drift random walk over a *log-return* series: every `Forecaster` (this baseline and
+    `TimesFMForecaster` alike) forecasts the series' own next values step by step, i.e. the
+    *marginal* 1-step return at each future bar -- and for an i.i.d. random walk that marginal
+    distribution is identical at every future step, so this forecaster's raw per-step quantiles
+    are flat across the horizon (the series' own empirical return quantiles, unscaled).
+
+    The textbook "spreads like sqrt(h)" behavior of a random walk shows up one level up, in
+    `targets.cumulative_log_return_bps`, which sums the (equal, here) per-step variances across
+    h steps -- `sqrt(h) * sigma` emerges from `h` steps of constant per-step variance `sigma^2`,
+    exactly the i.i.d.-increments identity. Scaling by `sqrt(h)` *inside* this class as well
+    would double-count that spreading once the two are composed, so it deliberately doesn't.
+
+    `min_history` series shorter than this are skipped (omitted from the result) rather than
+    given a degenerate forecast.
+    """
 
     min_history: int = _MIN_HISTORY
 
@@ -53,10 +65,8 @@ class RandomWalkForecaster:
             hist = hist[~np.isnan(hist)]
             if hist.size < self.min_history:
                 continue
-            base_q = {level: float(np.quantile(hist, level)) for level in QUANTILE_LEVELS}
-            steps = np.sqrt(np.arange(1, horizon + 1, dtype=float))
             point = np.zeros(horizon, dtype=float)
-            quantiles = {level: base_q[level] * steps for level in QUANTILE_LEVELS}
+            quantiles = {level: np.full(horizon, float(np.quantile(hist, level))) for level in QUANTILE_LEVELS}
             out[key] = constant_quantile_forecast(point, quantiles)
         return out
 
