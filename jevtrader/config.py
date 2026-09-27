@@ -35,6 +35,9 @@ class Settings:
     data_dir: Path
     runs_dir: Path
     state_dir: Path
+    decision_backend: str = "offline"  # jev | kev | laya | offline
+    kev_base_url: str = "http://127.0.0.1:8009"
+    laya_base_url: str = "http://127.0.0.1:8000"
 
     @property
     def has_alpaca(self) -> bool:
@@ -67,6 +70,9 @@ def load_settings(env_file: str | os.PathLike | None = None) -> Settings:
         jev_model=e("TYPESAFE_DEFAULT_MODEL", "jev-latest"),
         jev_latency_budget_ms=int(e("JEV_LATENCY_BUDGET_MS", "400")),
         live_confirm=e("JEV_LIVE_CONFIRM", ""),
+        decision_backend=e("DECISION_BACKEND", "").strip().lower() or ("jev" if e("TYPESAFE_API_KEY") else "offline"),
+        kev_base_url=e("KEV_BASE_URL", "http://127.0.0.1:8009"),
+        laya_base_url=e("LAYA_BASE_URL", "http://127.0.0.1:8000"),
         data_dir=Path(e("JEV_DATA_DIR", str(ROOT / "data" / "cache"))),
         runs_dir=Path(e("JEV_RUNS_DIR", str(ROOT / "runs"))),
         state_dir=Path(e("JEV_STATE_DIR", str(ROOT / "state"))),

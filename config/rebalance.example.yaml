@@ -1,0 +1,55 @@
+# Example config for jevtrader.rebalance.bot.SmartRebalanceBot ("smart_rebalance" in the registry).
+# This file documents the knobs; the bot itself is constructed with `symbols` + `params` (see
+# jevtrader/rebalance/bot.py's StrategySpec.default_params) - wire this file up in your own
+# runner/CLI config by loading it and passing the "params" section through.
+
+strategy: smart_rebalance
+
+# A mixed equity + crypto sleeve. Alpaca crypto is long-only; equities may be shortable but this
+# bot never shorts (target weights are always >= 0).
+symbols:
+  - SPY        # US large-cap equities
+  - QQQ        # US large-cap tech
+  - TLT        # long-duration US Treasuries (diversifier)
+  - GLD        # gold (diversifier)
+  - BTC/USD    # crypto
+  - ETH/USD    # crypto
+
+params:
+  # Target-weight scheme: equal_weight | inverse_vol | risk_parity | hrp | min_variance
+  # HRP is the most robust default for a small, mixed-asset-class book (no matrix inversion,
+  # degrades gracefully with a near-singular correlation matrix).
+  scheme: hrp
+
+  # Trading days of returns used to estimate vol/correlation/covariance for the scheme.
+  lookback: 90
+
+  # Per-asset weight bounds (long-only). max_weight keeps any single sleeve from dominating.
+  min_weight: 0.0
+  max_weight: 0.35
+
+  # Held back as cash, never allocated to a target - a small liquidity/slippage buffer.
+  cash_buffer_pct: 0.03
+
+  # ALWAYS dry-run a new configuration first: set true, review the logged plan / markdown, then
+  # flip to false once you've confirmed it does what you expect.
+  dry_run: true
+
+  # LIMIT order price offset from mid, in bps, used by the planner (buys at mid*(1+x), sells at
+  # mid*(1-x)).
+  limit_offset_bps: 5.0
+
+  # Symbols eligible for the (optional) Jev regime tilt. Leave null to default to every crypto
+  # symbol in `symbols`. Ignored entirely when the strategy runs with ctx.jev is None.
+  risky_symbols: null
+
+# Policy knobs (jevtrader.rebalance.policy.RebalancePolicy) - set these on `bot.policy` after
+# construction; not currently loaded automatically from this file.
+policy:
+  abs_band: 0.05          # 5/25 rule: absolute drift trigger
+  rel_band: 0.25          # 5/25 rule: relative drift trigger
+  frequency: "1w"         # calendar cadence the bot's on_day_end checks against
+  min_trade_notional: 50.0
+  default_spread_bps: 5.0 # fallback spread estimate when a live quote's own spread is unknown
+  tilt_k: 0.5             # Jev regime tilt sensitivity to p(risk_off)
+  tilt_max: 0.20          # Jev regime tilt hard cap (max 20% weight reduction)

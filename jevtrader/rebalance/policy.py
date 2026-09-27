@@ -16,7 +16,7 @@ import pandas as pd
 
 from jevtrader.core.fees import FeeModel
 from jevtrader.core.interfaces import JevAdvisorProtocol
-from jevtrader.core.types import AssetClass, Instrument, Liquidity, Side
+from jevtrader.core.types import Instrument, Liquidity, Side
 
 
 @dataclass
