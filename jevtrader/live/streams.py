@@ -113,7 +113,7 @@ class OrderBookBuilder:
             return None
         return OrderBook(
             symbol=symbol,
-            ts=pd.Timestamp.utcnow(),
+            ts=pd.Timestamp.now("UTC"),
             bids=_sorted_levels(self._bids[symbol].levels, descending=True),
             asks=_sorted_levels(self._asks[symbol].levels, descending=False),
         )

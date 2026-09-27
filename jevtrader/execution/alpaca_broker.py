@@ -257,7 +257,7 @@ def map_alpaca_account_to_core(
         equity=_f(getattr(resp, "equity", None)),
         buying_power=_f(getattr(resp, "buying_power", None)),
         positions=dict(positions),
-        ts=now or pd.Timestamp.utcnow(),
+        ts=now or pd.Timestamp.now("UTC"),
     )
 
 
@@ -339,7 +339,7 @@ class AlpacaBroker(Broker):
 
     def submit(self, order: Order) -> Order:
         instrument = self._instrument(order.symbol)
-        order.created_ts = order.created_ts or pd.Timestamp.utcnow()
+        order.created_ts = order.created_ts or pd.Timestamp.now("UTC")
 
         if order.post_only and order.type is not OrderType.LIMIT:
             order.status = OrderStatus.REJECTED
@@ -474,7 +474,7 @@ class AlpacaBroker(Broker):
                     liquidity = self._liquidity_hint.get(cid, Liquidity.TAKER)
                 fee = self._fee_model.fee(instrument, local.side, qty, price, liquidity)
                 ts_raw = getattr(update, "timestamp", None)
-                ts = pd.Timestamp(ts_raw) if ts_raw is not None else pd.Timestamp.utcnow()
+                ts = pd.Timestamp(ts_raw) if ts_raw is not None else pd.Timestamp.now("UTC")
                 fill = Fill(
                     client_order_id=cid,
                     symbol=local.symbol,

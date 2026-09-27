@@ -211,7 +211,7 @@ def promote_to_paper(
         record = {
             "candidate_id": candidate_id,
             "stage": "paper",
-            "promoted_at": pd.Timestamp.utcnow().isoformat(),
+            "promoted_at": pd.Timestamp.now("UTC").isoformat(),
             "backtest_metrics": dict(backtest_report),
             "paper_metrics": existing.get("paper_metrics"),
             "live_started_at": None,
@@ -245,7 +245,7 @@ def promote_to_live(
         record.update(
             stage="live",
             paper_metrics=dict(paper_summary),
-            live_started_at=existing.get("live_started_at") or pd.Timestamp.utcnow().isoformat(),
+            live_started_at=existing.get("live_started_at") or pd.Timestamp.now("UTC").isoformat(),
             capital_frac=th_live["initial_capital_frac"],
         )
         _save_promotion(record, settings)
@@ -263,7 +263,7 @@ def current_capital_frac(
         return 0.0
     th = (thresholds or load_thresholds())["live"]
     started = pd.Timestamp(record["live_started_at"])
-    days = (pd.Timestamp.utcnow() - started).total_seconds() / 86400.0
+    days = (pd.Timestamp.now("UTC") - started).total_seconds() / 86400.0
     frac = th["scale_schedule"][0]["capital_frac"]
     for step in th["scale_schedule"]:
         if days >= step["after_days"]:

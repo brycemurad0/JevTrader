@@ -13,6 +13,7 @@ from types import SimpleNamespace
 from typing import Any, Dict, List, Optional
 
 import pandas as pd
+from alpaca.common.exceptions import APIError as ApiError  # re-exported: AlpacaBroker catches this exact class
 
 from jevtrader.config import LIVE_CONFIRM_PHRASE, Settings
 
@@ -56,7 +57,7 @@ def alpaca_order(**overrides: Any) -> SimpleNamespace:
         filled_avg_price=None,
         limit_price=None,
         stop_price=None,
-        submitted_at=pd.Timestamp.utcnow(),
+        submitted_at=pd.Timestamp.now("UTC"),
         order_class="simple",
     )
     defaults.update(overrides)
@@ -80,21 +81,13 @@ def alpaca_trade_update(**overrides: Any) -> SimpleNamespace:
         event="fill",
         execution_id=str(uuid.uuid4()),
         order=alpaca_order(),
-        timestamp=pd.Timestamp.utcnow(),
+        timestamp=pd.Timestamp.now("UTC"),
         position_qty=1.0,
         price=150.25,
         qty=1.0,
     )
     defaults.update(overrides)
     return SimpleNamespace(**defaults)
-
-
-class ApiError(Exception):
-    """Stand-in for alpaca.common.exceptions.APIError good enough for AlpacaBroker's `except`."""
-
-    def __init__(self, message: str) -> None:
-        super().__init__(message)
-        self.message = message
 
 
 class FakeTradingClient:

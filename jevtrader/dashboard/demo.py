@@ -40,7 +40,7 @@ class _DemoBroker(Broker):
         order.filled_qty = order.qty
         order.avg_fill_price = price
         fee = abs(order.qty * price) * 0.0005
-        fill = Fill(order.client_order_id, order.symbol, order.side, order.qty, price, fee, Liquidity.TAKER, pd.Timestamp.utcnow(), order.strategy_id)
+        fill = Fill(order.client_order_id, order.symbol, order.side, order.qty, price, fee, Liquidity.TAKER, pd.Timestamp.now("UTC"), order.strategy_id)
         pos = self._positions.setdefault(order.symbol, Position(symbol=order.symbol))
         pos.apply_fill(fill)
         self._cash -= order.side.sign * order.qty * price + fee

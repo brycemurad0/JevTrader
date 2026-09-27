@@ -61,7 +61,7 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class RunConfig:
-    run_id: str = field(default_factory=lambda: pd.Timestamp.utcnow().strftime("%Y%m%dT%H%M%S%fZ"))
+    run_id: str = field(default_factory=lambda: pd.Timestamp.now("UTC").strftime("%Y%m%dT%H%M%S%fZ"))
     stale_data_seconds: float = 30.0
     heartbeat_seconds: float = 5.0
     equity_snapshot_seconds: float = 60.0
@@ -85,7 +85,7 @@ class Journal:
         self._fh = open(self.path, "a", buffering=1)
 
     def write(self, kind: str, **fields: Any) -> None:
-        record = {"ts": pd.Timestamp.utcnow().isoformat(), "kind": kind, **fields}
+        record = {"ts": pd.Timestamp.now("UTC").isoformat(), "kind": kind, **fields}
         line = json.dumps(record, default=str)
         with self._lock:
             self._fh.write(line + "\n")
@@ -308,7 +308,7 @@ class LiveRunner:
         self._bars: dict[str, deque] = defaultdict(lambda: deque(maxlen=5000))
         self.last_quote: dict[str, Quote] = {}
         self.last_book: dict[str, OrderBook] = {}
-        self.now: pd.Timestamp = pd.Timestamp.utcnow()
+        self.now: pd.Timestamp = pd.Timestamp.now("UTC")
         self._last_data_ts: Optional[pd.Timestamp] = None
         self._paused = False
         self._stop = asyncio.Event()
@@ -494,7 +494,7 @@ class LiveRunner:
     def _is_stale(self) -> bool:
         if self._last_data_ts is None:
             return False
-        age = (pd.Timestamp.utcnow() - self._last_data_ts).total_seconds()
+        age = (pd.Timestamp.now("UTC") - self._last_data_ts).total_seconds()
         return age > self.config.stale_data_seconds
 
     async def _heartbeat_loop(self) -> None:
