@@ -192,3 +192,11 @@ def test_load_thresholds_merges_yaml_file(tmp_path):
 def test_load_thresholds_falls_back_to_defaults_when_file_missing(tmp_path):
     th = promotion.load_thresholds(tmp_path / "does_not_exist.yaml")
     assert th == promotion.DEFAULT_THRESHOLDS
+
+
+def test_negative_drawdown_convention_is_not_a_free_pass():
+    """Backtest metrics report max_drawdown as a negative number; the gate must use its magnitude."""
+    from jevtrader.live.promotion import evaluate_backtest
+
+    report = {"oos_sharpe_after_fees": 2.0, "dsr_prob": 0.99, "max_drawdown": -0.50, "n_trades": 500, "fee_stress_pass": True}
+    assert not evaluate_backtest(report).passed

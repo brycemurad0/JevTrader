@@ -100,6 +100,11 @@ class SmartRebalanceBot(Strategy):
             quote = ctx.last_quote(sym)
             if quote is not None:
                 prices[sym] = quote.mid
+            else:
+                # Bar-only feeds (daily/hourly backtests, bar streams) have no quotes: use last close.
+                bars = ctx.bars(sym, 1)
+                if bars is not None and len(bars):
+                    prices[sym] = float(bars["close"].iloc[-1])
         return prices
 
     def _current_weights(self, ctx: StrategyContext, prices: dict[str, float], equity: float) -> dict[str, float]:

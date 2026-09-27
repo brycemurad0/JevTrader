@@ -101,7 +101,7 @@ def evaluate_backtest(report: Mapping[str, Any], thresholds: Optional[dict[str, 
     if dsr < th["min_dsr_prob"]:
         reasons.append(f"dsr_prob {dsr:.3f} < required {th['min_dsr_prob']:.3f}")
 
-    max_dd = float(report.get("max_drawdown", 1.0))
+    max_dd = abs(float(report.get("max_drawdown", 1.0)))  # backtest metrics report DD as negative
     if max_dd > th["max_drawdown"]:
         reasons.append(f"max_drawdown {max_dd:.2%} > allowed {th['max_drawdown']:.2%}")
 
@@ -135,7 +135,7 @@ def evaluate_paper(
     if sharpe < th["min_sharpe"]:
         reasons.append(f"sharpe {sharpe:.2f} < required {th['min_sharpe']:.2f}")
 
-    max_dd = float(paper_summary.get("max_drawdown", 1.0))
+    max_dd = abs(float(paper_summary.get("max_drawdown", 1.0)))
     if max_dd > th["max_drawdown"]:
         reasons.append(f"max_drawdown {max_dd:.2%} > allowed {th['max_drawdown']:.2%}")
 

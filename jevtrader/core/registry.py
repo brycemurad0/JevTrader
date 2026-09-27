@@ -19,6 +19,7 @@ def register(cls: type[Strategy]) -> type[Strategy]:
 
 
 def _autoload() -> None:
+    importlib.import_module("jevtrader.rebalance.bot")  # SmartRebalanceBot lives outside strategies/
     try:
         pkg = importlib.import_module("jevtrader.strategies")
     except ModuleNotFoundError:
