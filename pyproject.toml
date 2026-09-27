@@ -1,0 +1,36 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "jevtrader"
+version = "0.1.0"
+description = "Local, fee-aware quant trading stack: Jev-gated strategies, backtest -> paper -> live promotion, risk engine, smart rebalancer."
+requires-python = ">=3.10"
+dependencies = [
+  "numpy>=1.26",
+  "pandas>=2.1",
+  "scipy>=1.11",
+  "statsmodels>=0.14",
+  "pydantic>=2.6",
+  "pyyaml>=6",
+  "python-dotenv>=1.0",
+  "typer>=0.12",
+  "typesafe-sdk>=0.7",
+  "alpaca-py>=0.30",
+  "fastapi>=0.110",
+  "uvicorn>=0.29",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8"]
+
+[project.scripts]
+jev = "jevtrader.cli:app"
+
+[tool.setuptools.packages.find]
+include = ["jevtrader*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
