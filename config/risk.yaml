@@ -1,0 +1,65 @@
+# RiskLimits configuration - jevtrader.risk.limits.RiskLimits.from_yaml("config/risk.yaml")
+#
+# Philosophy: capital preservation first. Every number here is an explicit, human-reasoned
+# limit, not a magic constant buried in code. Defaults below are conservative and sized for a
+# SMALL account; widen them deliberately (and one at a time) as a strategy earns more capital
+# through the backtest -> paper -> live promotion pipeline.
+
+risk:
+  # ------------------------------------------------------------------ position & exposure caps
+  # Ceiling on any single symbol's position. The TIGHTER of the $ amount and the % of equity
+  # always wins, so this stays sane both for a $2,000 account and a $200,000 one.
+  max_position_notional_usd: 5000.0
+  max_position_pct_equity: 0.20        # no more than 20% of equity in any one name
+
+  # Sum of |position notional| across the whole book. 1.00 = no leverage (fully invested, no more).
+  max_gross_exposure_pct: 1.00
+  # Signed (net) exposure cap - keeps the book from becoming one big directional bet even when
+  # gross exposure is within budget (e.g. long everything with no hedges).
+  max_net_exposure_pct: 0.75
+
+  # Crypto is its own risk bucket: higher vol, thinner liquidity, weekend gap risk, and Alpaca
+  # crypto is long-only. Cap total crypto exposure well below the equity gross cap.
+  crypto_max_pct_equity: 0.25
+
+  # Per-strategy capital allocation: how much of equity a single strategy_id may hold across all
+  # of its positions (tracked from fills, not just intent). Unlisted strategies use the default.
+  per_strategy_capital_pct: {}
+  default_strategy_capital_pct: 0.50
+
+  # ------------------------------------------------------------------ order-level guards
+  max_open_orders_per_symbol: 5
+  max_order_notional_usd: 2000.0       # single-order ceiling, independent of the position caps
+  max_orders_per_minute: 20            # throttle: stops a runaway loop / fat-finger spam
+  fat_finger_band_bps: 100.0           # reject a limit order priced >1.00% away from last mid
+  min_notional_usd: 5.0                # reject dust orders below this (reduce_only is exempt)
+
+  # ------------------------------------------------------------------ capital preservation
+  # Halt NEW risk for the rest of the trading day once daily PnL drops this much. Existing
+  # positions are left open (not a kill switch) - the idea is "stop digging", not "panic sell".
+  max_daily_loss_pct: 0.03             # 3%
+  # Kill switch: halts everything AND signals the caller to flatten every position. Measured
+  # from the all-time high-water mark of account equity, so it survives across days.
+  max_drawdown_pct: 0.15               # 15%
+  # After this many consecutive losing (realized) trades, halt new risk for a cooldown period -
+  # a cheap circuit breaker for a strategy that has started misbehaving intraday.
+  max_consecutive_losses: 5
+  consecutive_loss_cooldown_minutes: 60.0
+  # Hour (0-23 UTC) the daily PnL baseline resets. Real markets differ (crypto: 00:00 UTC;
+  # US equities: 9:30 ET open) but we keep ONE configurable hour for simplicity, as directed.
+  # 0 (UTC midnight) is the sane default for a crypto-heavy book; set to 14 (~9:30 ET, DST-naive)
+  # if your book is equity-only.
+  daily_reset_hour_utc: 0
+
+  # ------------------------------------------------------------------ instrument rules
+  enforce_long_only_for_non_shortable: true   # Alpaca crypto is long-only; respect Instrument.shortable
+
+  trading_hours:
+    enabled: true                # set false to disable the guard entirely (e.g. crypto-only book)
+    tz: "America/New_York"
+    regular_start: "09:30"
+    regular_end: "16:00"
+    allow_extended_hours: false  # true also allows the extended window below
+    extended_start: "04:00"
+    extended_end: "20:00"
+    trade_weekends: false        # equities never trade weekends; irrelevant for crypto symbols

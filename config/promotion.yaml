@@ -1,0 +1,50 @@
+# Thresholds for the backtest -> paper -> live promotion gate.
+# See docs/PROMOTION.md and jevtrader/live/promotion.py.
+#
+# Any key left out here falls back to the DEFAULT_THRESHOLDS baked into promotion.py, so this
+# file only needs to list the values you want to override.
+
+backtest:
+  # Out-of-sample Sharpe ratio, computed AFTER fees (jevtrader/core/fees.py), required to promote
+  # a backtest to paper trading.
+  min_oos_sharpe_after_fees: 1.0
+  # Probability from the deflated Sharpe ratio test (accounts for multiple-testing / selection
+  # bias across a parameter sweep) that the strategy's edge is real, not overfit.
+  min_dsr_prob: 0.95
+  # Maximum backtest max-drawdown allowed.
+  max_drawdown: 0.20
+  # Minimum number of round-trip trades in the backtest sample (statistical significance floor).
+  min_trades: 30
+  # The backtest report must include fee_stress_pass=true: the strategy must still pass under a
+  # fee-stress scenario (fees bumped, e.g. Alpaca crypto's higher-volume tiers not yet reached).
+  require_fee_stress_pass: true
+
+paper:
+  # Minimum number of distinct trading days in the paper-trading forward test.
+  min_trading_days: 20
+  # Minimum number of round-trip trades observed in paper trading.
+  min_trades: 30
+  # Minimum realized Sharpe ratio over the paper-trading period.
+  min_sharpe: 0.5
+  # Maximum drawdown observed in paper trading.
+  max_drawdown: 0.20
+  # Paper trading's realized cost (fees + spread + slippage, in bps of notional) may not deviate
+  # from the backtest's modeled cost by more than this many bps -- if it does, the backtest's fill
+  # simulator is not representative of reality and the strategy should not go live yet.
+  max_cost_deviation_bps: 15.0
+
+live:
+  # Fraction of the strategy's intended live size to trade at from day 0 of going live.
+  initial_capital_frac: 0.10
+  # Scale-up schedule: fraction of intended size in effect once at least `after_days` have
+  # elapsed since `live_started_at`. Entries are applied in order: the schedule is effectively a
+  # step function of days-since-live, so keep `after_days` ascending.
+  scale_schedule:
+    - after_days: 0
+      capital_frac: 0.10
+    - after_days: 10
+      capital_frac: 0.25
+    - after_days: 20
+      capital_frac: 0.50
+    - after_days: 30
+      capital_frac: 1.00
