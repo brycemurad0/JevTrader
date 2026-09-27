@@ -10,12 +10,16 @@
   without a network call or an API key.
 - `ReplayJevAdvisor`: replays real (paper-trading) Jev decisions from a `DecisionLog` so a
   backtest can honestly evaluate what Jev actually said, instead of hindsight or a heuristic.
-- `make_advisor`: picks the right one for a given `Settings` + trading mode.
+- `ShadowAdvisor`: answers with one primary advisor while firing the same question at other
+  backends in the background purely to log a head-to-head comparison, for free, during paper
+  trading.
+- `make_advisor`: picks the right one for a given `Settings` + trading mode + decision backend.
 """
 
 from __future__ import annotations
 
 import asyncio
+import concurrent.futures
 import hashlib
 import json
 import logging
@@ -29,6 +33,7 @@ from typing import Any, Deque, Iterable, Mapping, Optional
 from typesafe_sdk import TypeSafeError
 
 from jevtrader.core.interfaces import JevView
+from jevtrader.jev.backends import DecisionBackend, make_client
 from jevtrader.jev.log import DecisionLog, read_jsonl
 from jevtrader.jev.questions import direction_questions, regime_questions
 from jevtrader.jev.state import to_json
@@ -628,27 +633,141 @@ class ReplayJevAdvisor:
         return self._next("_", question_key)
 
 
+# --------------------------------------------------------------------------- shadow advisor
+
+
+class ShadowAdvisor:
+    """Answers with `primary` while firing the identical question at each backend in `shadows`
+    off to the side, purely for comparison logging -- trading decisions never depend on a
+    shadow's answer or latency.
+
+    In paper trading this collects Jev vs Kev vs Laya (or any other `JevAdvisorProtocol`,
+    including `OfflineJevAdvisor`/`ForecastAdvisor`-style in-process advisors) answers on
+    IDENTICAL states for free: `jevtrader.jev.finetune.scoreboard` can later score every
+    backend's decision log against the same realized outcomes with no restated state.
+
+    Guarantees:
+    - `direction`/`regime`/`ask` always return `primary`'s result immediately -- a shadow is
+      never on the critical path and never blocks the caller (each fires on a background
+      thread).
+    - A shadow that raises, hangs, or answers `None` is caught and logged; it never surfaces to
+      the caller and never affects `primary`'s answer.
+    - Every shadow answer that DOES come back is written to `decision_log` (if attached) tagged
+      `extra={"backend": name, "shadow": True}`, under the same `(symbol, question_key)` the
+      primary would use, so its rows line up with the primary's for calibration/scoreboard
+      analysis.
+    - Call `wait(timeout=None)` to block until in-flight shadow calls finish -- for tests and a
+      clean shutdown; never required on the trading hot path.
+    """
+
+    def __init__(
+        self,
+        primary: Any,
+        shadows: Mapping[str, Any],
+        *,
+        decision_log: Optional[DecisionLog] = None,
+        max_workers: int = 4,
+    ) -> None:
+        self._primary = primary
+        self._shadows = dict(shadows)
+        self._decision_log = decision_log
+        self._executor = concurrent.futures.ThreadPoolExecutor(max_workers=max(1, max_workers), thread_name_prefix="jev-shadow")
+        self._futures: list[concurrent.futures.Future] = []
+
+    def direction(self, symbol: str, features: Mapping[str, Any], horizon: str) -> Optional[JevView]:
+        result = self._primary.direction(symbol, features, horizon)
+        self._fan_out("direction", (symbol, features, horizon), symbol=symbol, question_key=f"direction:{horizon}", state=dict(features))
+        return result
+
+    def regime(self, symbol: str, features: Mapping[str, Any]) -> Optional[JevView]:
+        result = self._primary.regime(symbol, features)
+        self._fan_out("regime", (symbol, features), symbol=symbol, question_key="regime", state=dict(features))
+        return result
+
+    def ask(self, state: Mapping[str, Any], questions: Mapping[str, Any]) -> Optional[JevView]:
+        result = self._primary.ask(state, questions)
+        question_key = ",".join(sorted(questions.keys()))
+        self._fan_out("ask", (state, questions), symbol="_", question_key=question_key, state=dict(state))
+        return result
+
+    def _fan_out(self, method_name: str, args: tuple[Any, ...], *, symbol: str, question_key: str, state: dict[str, Any]) -> None:
+        if not self._shadows:
+            return
+        self._futures = [f for f in self._futures if not f.done()]  # drop finished futures so this list can't grow unbounded
+        for name, shadow in self._shadows.items():
+            self._futures.append(self._executor.submit(self._run_shadow, name, shadow, method_name, args, symbol, question_key, state))
+
+    def _run_shadow(self, name: str, shadow: Any, method_name: str, args: tuple[Any, ...], symbol: str, question_key: str, state: dict[str, Any]) -> None:
+        try:
+            view = getattr(shadow, method_name)(*args)
+        except Exception:
+            logger.exception("shadow backend %r failed on %s/%s", name, symbol, question_key)
+            return
+        if view is None or self._decision_log is None:
+            return
+        try:
+            self._decision_log.record(symbol=symbol, state=state, questions={}, view=view, question_key=question_key, extra={"backend": name, "shadow": True})
+        except Exception:
+            logger.exception("failed to log shadow decision for backend %r on %s/%s", name, symbol, question_key)
+
+    def wait(self, timeout: Optional[float] = None) -> None:
+        """Block until every currently in-flight shadow call finishes (or `timeout` elapses)."""
+        futures, self._futures = self._futures, []
+        for f in futures:
+            try:
+                f.result(timeout=timeout)
+            except Exception:
+                pass
+
+    def close(self) -> None:
+        self.wait()
+        self._executor.shutdown(wait=False)
+
+
 # --------------------------------------------------------------------------- factory
 
 
-def make_advisor(settings: Any, mode: Any, *, decision_log: Optional[DecisionLog] = None, client: Optional[Any] = None) -> Any:
-    """Build the right `JevAdvisorProtocol` for `settings` + trading `mode`.
+def make_advisor(
+    settings: Any,
+    mode: Any,
+    *,
+    decision_log: Optional[DecisionLog] = None,
+    client: Optional[Any] = None,
+    backend: Optional[Any] = None,
+) -> Any:
+    """Build the right `JevAdvisorProtocol` for `settings` + trading `mode` (+ decision `backend`).
 
-    Real `JevAdvisor` when `settings.has_jev` and `mode` is `"paper"` or `"live"` (accepts
-    either a `jevtrader.core.broker.TradingMode` or a plain string); `OfflineJevAdvisor`
-    otherwise (backtests, tests, or paper/live without an API key -- fails open to the safe,
-    offline stand-in rather than raising).
+    `mode` gates network use at all: anything other than `"paper"`/`"live"` (accepts either a
+    `jevtrader.core.broker.TradingMode` or a plain string) always returns `OfflineJevAdvisor` --
+    a backtest never depends on a remote API or a locally running server being up.
+
+    In `paper`/`live`, `backend` picks the implementation (a `DecisionBackend` or one of its
+    string values `"jev"`/`"kev"`/`"laya"`/`"offline"`). It defaults to `$DECISION_BACKEND`,
+    and if that's unset too, to `"jev"` -- i.e. unchanged pre-existing behavior: a real
+    `JevAdvisor` against hosted Jev when `settings.has_jev`, else `OfflineJevAdvisor`. Setting
+    `DECISION_BACKEND=kev` or `DECISION_BACKEND=laya` (or passing `backend=` explicitly) instead
+    points `JevAdvisor` at a locally served Kev/Laya checkpoint via `backends.make_client` --
+    no API key required, and never a hard failure: an unresolvable backend still fails open to
+    `OfflineJevAdvisor` rather than raising into the trading loop.
     """
     mode_value = getattr(mode, "value", mode)
-    if getattr(settings, "has_jev", False) and mode_value in ("paper", "live"):
-        c = client
-        if c is None:
-            from typesafe_sdk import TypeSafeClient
+    if mode_value not in ("paper", "live"):
+        return OfflineJevAdvisor()
 
-            c = TypeSafeClient(
-                api_key=settings.typesafe_api_key,
-                model=getattr(settings, "jev_model", None),
-                timeout=max(1.0, settings.jev_latency_budget_ms / 1000.0),
-            )
-        return JevAdvisor(c, model=getattr(settings, "jev_model", None), latency_budget_ms=settings.jev_latency_budget_ms, decision_log=decision_log)
-    return OfflineJevAdvisor()
+    resolved_backend = DecisionBackend.coerce(backend) if backend is not None else DecisionBackend.from_env(default=DecisionBackend.JEV)
+
+    if resolved_backend is DecisionBackend.OFFLINE:
+        return OfflineJevAdvisor()
+    if resolved_backend is DecisionBackend.JEV and not getattr(settings, "has_jev", False):
+        return OfflineJevAdvisor()
+
+    c = client
+    advisor_model = None
+    if c is None:
+        try:
+            advisor_model = getattr(settings, "jev_model", None) if resolved_backend is DecisionBackend.JEV else None
+            c = make_client(resolved_backend, settings=settings, timeout=max(1.0, settings.jev_latency_budget_ms / 1000.0))
+        except Exception:
+            logger.exception("failed to build a %s decision client; falling back to OfflineJevAdvisor", resolved_backend.value)
+            return OfflineJevAdvisor()
+    return JevAdvisor(c, model=advisor_model, latency_budget_ms=settings.jev_latency_budget_ms, decision_log=decision_log)

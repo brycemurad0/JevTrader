@@ -118,6 +118,25 @@ def test_position_context():
     assert flat_state["unrealized_pnl_bps"] == 0.0
 
 
+def test_extra_features_default_none_does_not_change_output():
+    df = _bars()
+    without = build_state("AAPL", df, cost_bps=5.0)
+    without_explicit_none = build_state("AAPL", df, cost_bps=5.0, extra_features=None)
+    assert without == without_explicit_none
+    assert "forecast" not in without
+
+
+def test_extra_features_merged_under_forecast_key_and_rounded():
+    df = _bars()
+    extra = {"tfm_ret_q50_bps": 12.3456789, "tfm_p_up_gt_cost": 0.61234567, "nested": {"x": 1.23456}}
+    state = build_state("AAPL", df, cost_bps=5.0, extra_features=extra)
+    assert state["forecast"]["tfm_ret_q50_bps"] == pytest.approx(12.3457)
+    assert state["forecast"]["tfm_p_up_gt_cost"] == pytest.approx(0.6123)
+    assert state["forecast"]["nested"]["x"] == pytest.approx(1.2346)
+    # still JSON-serializable and doesn't blow up the token budget
+    json.loads(to_json(state))
+
+
 def test_now_defaults_to_last_bar_ts_and_is_overridable():
     df = _bars()
     state_default = build_state("AAPL", df)

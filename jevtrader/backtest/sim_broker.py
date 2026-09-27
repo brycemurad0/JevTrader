@@ -173,7 +173,8 @@ class SimBroker(Broker):
 
         if not instrument.shortable and order.side is Side.SELL:
             pos = self._positions.get(order.symbol)
-            available = max(pos.qty, 0.0) if pos else 0.0
+            held = max(pos.qty, 0.0) if pos else 0.0
+            available = held - self._committed_sell_qty(order.symbol)
             if order.qty - available > 1e-9:
                 return self._reject(order, "would_short_non_shortable_instrument")
 
@@ -232,11 +233,29 @@ class SimBroker(Broker):
             return order.limit_price
         return self.mark_price(order.symbol)
 
+    def _committed_sell_qty(self, symbol: str) -> float:
+        """Remaining qty of currently open SELL orders on `symbol`, so a non-shortable
+        instrument's short check accounts for other resting sells, not just current position."""
+        return sum(s.order.remaining for s in self._pending.get(symbol, []) if s.order.side is Side.SELL and s.order.status.is_open)
+
+    def _committed_buy_notional(self) -> float:
+        """Estimated notional of every other currently open BUY order, across all symbols, so
+        several pending buys can't each individually pass the cash check and jointly overspend."""
+        total = 0.0
+        for states in self._pending.values():
+            for s in states:
+                o = s.order
+                if o.side is Side.BUY and o.status.is_open:
+                    price = o.limit_price if o.limit_price is not None else self.mark_price(o.symbol)
+                    if price is not None:
+                        total += o.remaining * price
+        return total
+
     def _has_buying_power(self, order: Order, ref_price: float) -> bool:
         if self.allow_leverage:
             return True
         if order.side is Side.BUY:
-            return order.qty * ref_price <= self._cash + 1e-6
+            return order.qty * ref_price + self._committed_buy_notional() <= self._cash + 1e-6
         pos = self._positions.get(order.symbol)
         current = pos.qty if pos else 0.0
         opening = max(0.0, order.qty - max(current, 0.0))  # only opening/adding to a short needs collateral

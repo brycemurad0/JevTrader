@@ -51,7 +51,9 @@ def periods_per_year(index: pd.DatetimeIndex, asset_class: AssetClass = AssetCla
     base_days = _EQUITY_TRADING_DAYS if asset_class is AssetClass.EQUITY else _CRYPTO_DAYS
     if len(index) < 2:
         return base_days
-    diffs = np.diff(index.asi8) / 1e9  # nanoseconds -> seconds
+    # np.diff on the raw datetime64 values (whatever resolution pandas stores, ns or us) divided
+    # by a 1-second timedelta64 gives seconds regardless of that resolution.
+    diffs = np.diff(index.values) / np.timedelta64(1, "s")
     dt = float(np.median(diffs))
     if dt <= 0:
         return base_days
@@ -236,9 +238,12 @@ def compute_metrics(
     gross_pnl = net_pnl + fee_total
     fee_drag = float(fee_total / gross_pnl) if abs(gross_pnl) > 1e-9 else float("nan")
 
-    total_notional = float(fills_df["notional"].abs().sum()) if not fills_df.empty and "notional" in fills_df else float(
-        (fills_df["qty"].abs() * fills_df["price"].abs()).sum()
-    ) if not fills_df.empty else 0.0
+    if fills_df.empty:
+        total_notional = 0.0
+    elif "notional" in fills_df:
+        total_notional = float(fills_df["notional"].abs().sum())
+    else:
+        total_notional = float((fills_df["qty"].abs() * fills_df["price"].abs()).sum())
     cost_per_trade_bps = float(fee_total / total_notional * 1e4) if total_notional > 0 else 0.0
     mean_equity = float(equity.mean())
     turnover = float(total_notional / mean_equity) if mean_equity > 0 else 0.0

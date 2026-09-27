@@ -156,6 +156,21 @@ def _position_pnl_bps(position: Optional[Position], last_px: float) -> float:
     return round(1e4 * upnl / notional, 1)
 
 
+def _round_tree(value: Any, ndigits: int = 4) -> Any:
+    """Recursively round every float in a (JSON-shaped) nested structure, leaving everything
+    else -- ints, bools, strings, `None` -- untouched. Used for `extra_features`, which comes
+    from another subsystem (e.g. a forecast model) and may not already be rounded."""
+    if isinstance(value, Mapping):
+        return {k: _round_tree(v, ndigits) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_round_tree(v, ndigits) for v in value]
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return _round(float(value), ndigits)
+    return value
+
+
 def build_state(
     symbol: str,
     bars: pd.DataFrame,
@@ -171,6 +186,7 @@ def build_state(
     atr_window: int = 14,
     trend_window: int = 20,
     zscore_window: int = 20,
+    extra_features: Optional[Mapping[str, Any]] = None,
 ) -> dict[str, Any]:
     """Build a compact, deterministic, JSON-serializable feature dict for Jev.
 
@@ -183,6 +199,12 @@ def build_state(
     spread/slippage), e.g. from `FeeModel.round_trip_bps` plus half the quoted spread; it
     tells Jev what size of move is actually worth trading, which is exactly the "up"/"down"
     threshold used by `questions.direction_questions`.
+
+    `extra_features`, when given, is merged in verbatim (recursively rounded to keep it
+    compact) under a `"forecast"` sub-key -- e.g. quantile forecasts from a separate
+    `jevtrader.forecast` model (`tfm_ret_q10_bps`, `tfm_p_up_gt_cost`, ...). This module has no
+    dependency on that one: it just merges whatever dict it's handed. Passing `None` (the
+    default) leaves the state byte-for-byte identical to a call without this argument.
     """
     if bars is None or len(bars) == 0:
         raise ValueError("build_state requires at least one bar")
@@ -222,6 +244,8 @@ def build_state(
         "unrealized_pnl_bps": _position_pnl_bps(position, last_px),
         "cost_bps": round(float(cost_bps), 2),
     }
+    if extra_features is not None:
+        state["forecast"] = _round_tree(dict(extra_features))
     return state
 
 
