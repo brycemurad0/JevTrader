@@ -33,7 +33,7 @@ import pandas as pd
 from jevtrader.core.broker import TradingMode
 from jevtrader.core.fees import FeeModel, default_fees
 from jevtrader.core.interfaces import RiskGate
-from jevtrader.core.strategy import Strategy, StrategyContext
+from jevtrader.core.strategy import Strategy
 from jevtrader.core.types import (
     AccountState,
     AssetClass,

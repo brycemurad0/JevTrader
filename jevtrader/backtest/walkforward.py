@@ -18,7 +18,7 @@ from typing import Callable, Optional, Sequence
 import numpy as np
 import pandas as pd
 
-from jevtrader.backtest.metrics import compute_metrics, deflated_sharpe_ratio
+from jevtrader.backtest.metrics import deflated_sharpe_ratio
 from jevtrader.backtest.sim_broker import SlippageModel
 from jevtrader.core.fees import AlpacaCryptoFees, AlpacaEquityFees, BpsFees, CompositeFees, FeeModel
 
