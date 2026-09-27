@@ -34,15 +34,23 @@ from jevtrader.strategies._base import BarStrategy
 class KalmanHedge:
     """2-state Kalman filter for y = beta*x + alpha with random-walk coefficients."""
 
-    def __init__(self, delta: float = 1e-4, obs_var: float = 1.0) -> None:
+    def __init__(self, delta: float = 1e-7, obs_var: float = 1.0, ew_alpha: float = 0.02) -> None:
         self.x = np.array([1.0, 0.0])
-        self.P = np.eye(2) * 1.0
+        # diffuse prior: prices are ~O(100) while the spread is O(0.1), so a tight prior on
+        # [beta, alpha] would take thousands of bars to move off [1, 0]
+        self.P = np.diag([1.0, 1e4])
         self.Q = np.eye(2) * delta / (1.0 - delta)
         self.R = obs_var
+        self.ew_alpha = ew_alpha
+        self.innov_var = float("nan")  # EW variance of realized innovations (drives the z-score)
         self.n = 0
 
     def update(self, px_a: float, px_b: float) -> tuple[float, float, float]:
-        """Returns (innovation, innovation_std, beta) after processing one observation."""
+        """Returns (innovation, innovation_std, beta) after processing one observation.
+
+        The z-score denominator is the EW std of *realized* innovations, not the filter's own
+        predicted variance S: S is inflated by the random-walk state noise (Q * price^2) and
+        would make z uninformative -- the standard practitioner fix."""
         H = np.array([px_a, 1.0])
         P_pred = self.P + self.Q
         y_pred = float(H @ self.x)
@@ -52,9 +60,12 @@ class KalmanHedge:
         self.x = self.x + K * innov
         self.P = P_pred - np.outer(K, H) @ P_pred
         self.n += 1
-        # adaptive observation variance (EW of squared innovations) keeps z well scaled
-        self.R = 0.98 * self.R + 0.02 * innov * innov if self.n > 10 else self.R
-        return innov, float(np.sqrt(max(S, 1e-12))), float(self.x[0])
+        if self.n > 10:
+            a = self.ew_alpha
+            self.innov_var = innov * innov if not np.isfinite(self.innov_var) else (1 - a) * self.innov_var + a * innov * innov
+            self.R = self.innov_var
+        sd = float(np.sqrt(self.innov_var)) if np.isfinite(self.innov_var) and self.innov_var > 0 else float(np.sqrt(max(S, 1e-12)))
+        return innov, sd, float(self.x[0])
 
 
 class PairsKalman(BarStrategy):
@@ -68,7 +79,7 @@ class PairsKalman(BarStrategy):
         default_params={
             **BarStrategy.BASE_PARAMS,
             "bar_minutes": 15,
-            "delta": 1e-4,
+            "delta": 1e-7,  # state-noise ratio: larger adapts the hedge faster but ABSORBS the spread (kills the signal)
             "warmup": 60,
             "entry_z": 2.0,
             "exit_z": 0.5,
@@ -101,7 +112,8 @@ class PairsKalman(BarStrategy):
         equity = ctx.account().equity
         notional_b = float(self.params["alloc_frac"]) * equity
         tgt_b = direction * notional_b / px_b
-        tgt_a = -direction * self.beta * notional_b / px_a if direction != 0 else 0.0
+        # hedge in SHARES: qty_a = beta * qty_b (p_b ~ alpha + beta * p_a), not beta x dollars
+        tgt_a = -direction * self.beta * (notional_b / px_b) if direction != 0 else 0.0
         for sym, tgt, px in ((b, tgt_b, px_b), (a, tgt_a, px_a)):
             cur = ctx.position(sym).qty
             delta = lot_round(tgt - cur, ctx.instrument(sym))

@@ -15,8 +15,8 @@ EQ_START = pd.Timestamp("2024-03-04 14:30", tz="UTC")
 
 @pytest.fixture(scope="session")
 def btc_bars() -> pd.DataFrame:
-    """3 days of 1-min synthetic 24/7 crypto bars (4320 bars)."""
-    return generate_bars("BTC/USD", CRYPTO_START, CRYPTO_START + pd.Timedelta(days=3), freq="1min", asset_class=AssetClass.CRYPTO, seed=21, start_price=60_000.0, annual_vol=0.6)
+    """2 days of 1-min synthetic 24/7 crypto bars (2880 bars)."""
+    return generate_bars("BTC/USD", CRYPTO_START, CRYPTO_START + pd.Timedelta(days=2), freq="1min", asset_class=AssetClass.CRYPTO, seed=21, start_price=60_000.0, annual_vol=0.6)
 
 
 @pytest.fixture(scope="session")

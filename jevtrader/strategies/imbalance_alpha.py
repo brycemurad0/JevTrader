@@ -54,6 +54,7 @@ class ImbalanceAlpha(Strategy):
             "calibrate": True,
             "min_t_stat": 2.0,
             "threshold_join": 0.3,
+            "requote_ticks": 2,
             "spread_bps_assumed": 2.0,
             "notional": 500.0,
             "max_position_notional": 2000.0,
@@ -190,8 +191,12 @@ class ImbalanceAlpha(Strategy):
         elif abs(sig) > float(self.params["threshold_join"]):
             price = quote.bid if side is Side.BUY else quote.ask
             resting = self._resting.get(sym)
-            if resting is not None and resting.status.is_open and resting.side is side and abs(resting.limit_price - price) < 1e-12:
-                return
+            if resting is not None and resting.status.is_open and resting.side is side:
+                # don't chase the touch tick by tick (that resets queue position every second and
+                # never fills): only re-post when we are more than `requote_ticks` away from it
+                tick = inst.tick_size or 0.01
+                if abs(resting.limit_price - price) <= float(self.params.get("requote_ticks", 2)) * tick + 1e-12:
+                    return
             self._cancel_resting(ctx, sym)
             o = Order(sym, side, qty, OrderType.LIMIT, limit_price=price, tif=TimeInForce.GTC, post_only=True, strategy_id=self.id, tag="join")
             if ctx.submit(o) is not None:

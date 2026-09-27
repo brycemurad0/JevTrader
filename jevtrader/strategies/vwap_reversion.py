@@ -46,11 +46,12 @@ class ZScoreReversion(BarStrategy):
             "session_only": True,  # equities: trade only inside 13:30-20:00 UTC and flatten at the close
         },
         notes=(
-            "EVIDENCE (research_reports/02_intraday_mean_reversion.md): equities at 5-15 min -- positive "
-            "net edge on SPX500-proxy and C in-sample; out-of-sample validation is the deciding evidence, "
-            "see the report for the verdict. Crypto (BTC on Alpaca): gross edge 2-15 bps per round trip vs "
-            "30-50 bps cost -> NOT VIABLE at tier-1 fees; break-even fee ~1-7 bps/side. Few parameters "
-            "(window, entry_z, exit_z); neighbours of the chosen params must also be positive."
+            "EVIDENCE (research_reports/02_intraday_mean_reversion.md, 02b): Citigroup 15-min -- MARGINAL: "
+            "train/val/holdout Sharpe 2.6/2.1/5.8, gross 45-88 bps per round trip vs 3.3 bps cost, stable "
+            "parameter neighbourhood, but only ~12 trades per OOS split (DSR 0.04 at 80 trials). SPX500 proxy "
+            "(SPY-like costs): in-sample edge vanished out of sample -> NOT VIABLE. BTC on Alpaca: gross edge "
+            "<= 5 bps per round trip vs 30-57 bps cost, and the 60-min signal loses even at zero fees over "
+            "2026 -> NOT VIABLE at any tier. Few parameters (window, entry_z, exit_z); the vol filter matters."
         ),
     )
 

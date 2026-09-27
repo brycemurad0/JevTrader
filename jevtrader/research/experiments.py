@@ -196,6 +196,7 @@ def run_bar_study(
     stability_params: Optional[tuple[str, str]] = None,
     event_strategy: Optional[Callable[[dict], object]] = None,
     crypto_ladder: bool = False,
+    label: Optional[str] = None,
 ) -> StudyOutcome:
     bars = _prep(ds, rule)
     split = chrono_split(ds.bars_1m)
@@ -229,7 +230,7 @@ def run_bar_study(
     params, nb = chosen
     params = {k: (int(v) if isinstance(grid[k][0], int) else float(v)) for k, v in params.items()}
     tgt = signal_fn(bars, params)
-    out = StudyOutcome(ds.label, rule, params, n_trials, neighbourhood_sharpe=nb)
+    out = StudyOutcome(ds.label, label or rule, params, n_trials, neighbourhood_sharpe=nb)
     for name in ("train", "val", "holdout"):
         r = _slice_result(bars, tgt, idx[name], ds.cost, ds, n_trials=n_trials, full=True)
         out.rows[name] = r.summary()
@@ -365,14 +366,13 @@ def study_trend(datasets: dict[str, Dataset], write: bool = True) -> str:
             def make_ema(p, _sym=ds.symbol, _bm=bm):
                 return TrendFollow([_sym], {"bar_minutes": _bm, "mode": "ema", "fast": int(p["fast"]), "slow": int(p["slow"]), "vol_window": 60, "target_bar_vol_bps": float(p["target_bar_vol_bps"]), "alloc_frac": 1.0, "min_delta_frac": 0.0})
 
-            o = run_bar_study(ds, rule + " EMA", lambda b, p: sig_ema(b, p), grid_ema, stability_params=("fast", "slow"), event_strategy=make_ema if rule in ("60min",) else None, crypto_ladder=(ds.asset_class is AssetClass.CRYPTO))
-            o.rule = rule + " EMA"
+            o = run_bar_study(ds, rule, lambda b, p: sig_ema(b, p), grid_ema, stability_params=("fast", "slow"), event_strategy=make_ema if rule in ("60min",) else None, crypto_ladder=(ds.asset_class is AssetClass.CRYPTO), label=rule + " EMA")
             outcomes.append(o)
 
             def sig_don(bars, p, _lo=ds.long_only):
                 return S.donchian(bars, int(p["n"]), int(p["exit_n"]), long_only=_lo)
 
-            o2 = run_bar_study(ds, rule + " Donchian", sig_don, grid_don, stability_params=("n", "exit_n"), crypto_ladder=(ds.asset_class is AssetClass.CRYPTO))
+            o2 = run_bar_study(ds, rule, sig_don, grid_don, stability_params=("n", "exit_n"), crypto_ladder=(ds.asset_class is AssetClass.CRYPTO), label=rule + " Donchian")
             outcomes.append(o2)
     lines.append("## Results")
     lines.append("")
@@ -407,14 +407,14 @@ def study_breakouts(datasets: dict[str, Dataset], write: bool = True) -> str:
                 return RangeBreakout([_sym], {"bar_minutes": 1, "session_start_utc": _h, "session_start_minute": _m, "range_minutes": int(p["range_minutes"]), "hold_minutes": int(p["hold_minutes"]), "min_range_bps": float(p["min_range_bps"]), "alloc_frac": 1.0, "min_delta_frac": 0.0})
 
             ds1 = Dataset(ds.label, ds.bars_1m, ds.asset_class, ds.cost, ds.symbol, session_filter=False, long_only=ds.long_only)
-            o = run_bar_study(ds1, f"1min ORB {nm}", sig, grid_orb, min_train_rt=20, stability_params=("range_minutes", "hold_minutes"), event_strategy=make if ds.asset_class is AssetClass.EQUITY else None, crypto_ladder=(ds.asset_class is AssetClass.CRYPTO))
+            o = run_bar_study(ds1, "1min", sig, grid_orb, min_train_rt=20, stability_params=("range_minutes", "hold_minutes"), event_strategy=make if ds.asset_class is AssetClass.EQUITY else None, crypto_ladder=(ds.asset_class is AssetClass.CRYPTO), label=f"1min ORB {nm}")
             outcomes.append(o)
         grid_sq = {"bb_window": [20, 40], "kc_mult": [1.0, 1.5], "hold": [6, 12, 24]}
 
         def sig_sq(bars, p, _lo=ds.long_only):
             return S.vol_squeeze(bars, int(p["bb_window"]), float(p["kc_mult"]), int(p["hold"]), long_only=_lo)
 
-        outcomes.append(run_bar_study(ds, "5min squeeze", sig_sq, grid_sq, stability_params=("bb_window", "hold"), crypto_ladder=(ds.asset_class is AssetClass.CRYPTO)))
+        outcomes.append(run_bar_study(ds, "5min", sig_sq, grid_sq, stability_params=("bb_window", "hold"), crypto_ladder=(ds.asset_class is AssetClass.CRYPTO), label="5min squeeze"))
     lines.append("## Results")
     lines.append("")
     for o in outcomes:
@@ -498,7 +498,7 @@ def study_stat_arb(datasets: dict[str, Dataset], write: bool = True, seed: int =
     lines = ["# 06 - Stat-arb: Kalman pairs (synthetic mechanics) and BTC->SPX lead-lag (real)", "", f"_Generated {pd.Timestamp.now('UTC'):%Y-%m-%d}._", ""]
     lines.append("## Pairs with Kalman hedge ratio -- MECHANICS on synthetic cointegrated pairs")
     lines.append("")
-    lines.append("No real equity pair data is cached, so this only shows the strategy recovers a known cointegration (beta=1.5, OU spread half-life 30 bars) and is profitable net of equity costs on that ground truth. It says NOTHING about real pairs -- run the validation list below on Alpaca history first.")
+    lines.append("No real equity pair data is cached, so this only shows the strategy recovers a known cointegration (beta=1.5, OU spread of a given half-life and vol) and what it earns net of Alpaca equity costs (3.3 bps per leg round trip) on that ground truth. Read the `spread_vol` rows together: a stationary spread std of ~60 bps of price (spread_vol 0.15) leaves room for costs and for the hedge-ratio estimation error (beta error x price level is itself ~0.5-1 dollar on a 100-dollar pair); a ~20 bps spread (spread_vol 0.05) does not and loses money. It says NOTHING about real pairs -- run the validation list below on Alpaca history first.")
     lines.append("")
     rows = []
     for hl, sv in [(30.0, 0.15), (60.0, 0.15), (30.0, 0.05)]:
@@ -538,7 +538,7 @@ def study_stat_arb(datasets: dict[str, Dataset], write: bool = True, seed: int =
             tgt, _ = S.lead_lag(b5_full, bars, int(p["lookback"]), float(p["threshold_bps"]), int(p["hold"]))
             return tgt
 
-        o = run_bar_study(ds, "5min BTC->SPX", sig, grid, min_train_rt=20, stability_params=("lookback", "threshold_bps"))
+        o = run_bar_study(ds, "5min", sig, grid, min_train_rt=20, stability_params=("lookback", "threshold_bps"), label="5min BTC->SPX")
         lines.append(o.to_markdown())
     text = "\n".join(lines)
     if write:
@@ -691,6 +691,58 @@ def study_meta_allocator(datasets: dict[str, Dataset], write: bool = True) -> st
     return text
 
 
+def study_crypto_maker_entry(datasets: dict[str, Dataset], write: bool = True) -> str:
+    """The one crypto question left open by the fast screen: does MAKER entry (15 bps, no spread)
+    instead of TAKER (25 bps + spread) rescue BTC mean reversion? Event-driven only (limit fills
+    need the SimBroker's trade-through rule), on validation+holdout, 60-min bars, long-only."""
+    from jevtrader.strategies.vwap_reversion import ZScoreReversion
+
+    lines = ["# 02b - BTC mean reversion with MAKER entries and Alpaca fee tiers (event-driven)", "", f"_Generated {pd.Timestamp.now('UTC'):%Y-%m-%d}._", ""]
+    if "btc" not in datasets:
+        lines.append("BTC data not available.")
+        text = "\n".join(lines)
+        if write:
+            (REPORT_DIR / "02b_btc_maker_entry.md").write_text(text)
+        return text
+    ds = datasets["btc"]
+    sp = chrono_split(ds.bars_1m)
+    oos = pd.concat([sp.val, sp.holdout])
+    lines.append(f"Sample: validation + holdout, {oos.index[0]:%Y-%m-%d} -> {oos.index[-1]:%Y-%m-%d} ({len(oos):,} 1-min bars), 60-min z-score reversion (window 30, entry 2.0, exit 0.0, vol filter 1.5), long-only, 100% of equity per trade so fee tiers are hit as they would be on a $100k account.")
+    lines.append("")
+    rows = []
+    for label, style, fee_model, slip in [
+        ("taker, tier-1 fixed (25 bps)", "market", CompositeFees(crypto=AlpacaCryptoFees(tiers=[(0, 15.0, 25.0)])), SlippageModel(2.5, 1.0, 0.0, float("inf"))),
+        ("taker, Alpaca tiers by rolling 30d volume", "market", CompositeFees(crypto=AlpacaCryptoFees()), SlippageModel(2.5, 1.0, 0.0, float("inf"))),
+        ("maker limit entry, tier-1 fixed (15 bps)", "limit", CompositeFees(crypto=AlpacaCryptoFees(tiers=[(0, 15.0, 25.0)])), SlippageModel(2.5, 1.0, 0.0, float("inf"))),
+        ("maker limit entry, Alpaca tiers", "limit", CompositeFees(crypto=AlpacaCryptoFees()), SlippageModel(2.5, 1.0, 0.0, float("inf"))),
+        ("maker limit entry, zero fees (edge check)", "limit", CompositeFees(crypto=AlpacaCryptoFees(tiers=[(0, 0.0, 0.0)])), SlippageModel(0.0, 0.0, 0.0, float("inf"))),
+    ]:
+        strat = ZScoreReversion(["BTC/USD"], {"bar_minutes": 60, "window": 30, "entry_z": 2.0, "exit_z": 0.0, "vol_window": 120, "max_vol_mult": 1.5, "alloc_frac": 1.0, "min_delta_frac": 0.0, "session_only": False, "entry_style": style})
+        bt = Backtester([strat], {"BTC/USD": to_bar_events(oos, "BTC/USD")}, fees=fee_model, fill_model=slip, initial_cash=100_000.0)
+        res = bt.run()
+        f = res.fills
+        maker_share = float((f["liquidity"] == "maker").mean()) if len(f) else float("nan")
+        rows.append({"setup": label, "sharpe": res.metrics["sharpe"], "total_return": res.metrics["total_return"], "max_dd": res.metrics["max_drawdown"], "n_fills": len(f), "maker_share": maker_share, "fee_bps_per_fill": res.metrics["cost_per_trade_bps"], "fees_usd": res.fee_total, "gross_pnl_usd": res.metrics["final_equity"] - 100_000 + res.fee_total, "net_pnl_usd": res.metrics["final_equity"] - 100_000})
+    df = pd.DataFrame(rows).set_index("setup")
+    lines.append(_md_table(df, "{:.3f}"))
+    lines.append("")
+    lines.append("Reading: `gross_pnl_usd` is what the signal makes before fees; if it is near zero or negative even at zero fees, no fee tier rescues it. Maker entries pay 15 instead of 25 bps and avoid the spread, but they fill less often and adversely (the limit sits at the close; it only fills when the next bar trades through it).")
+    lines.append("")
+    zero_edge = rows[-1]["gross_pnl_usd"]
+    maker_ok = all(r["net_pnl_usd"] > 0 for r in rows if r["setup"].startswith("maker"))
+    if zero_edge <= 0:
+        v = "NOT VIABLE at any fee tier -- the signal loses money even with zero fees, so no maker/tier improvement can rescue it"
+    elif maker_ok:
+        v = "MARGINAL -- positive with maker entries; confirm on paper with real Alpaca fills"
+    else:
+        v = "NOT VIABLE on Alpaca tiers -- gross edge exists but is smaller than the fee at every tier tested"
+    lines.append(f"**Verdict: {v}.**")
+    text = "\n".join(lines)
+    if write:
+        (REPORT_DIR / "02b_btc_maker_entry.md").write_text(text)
+    return text
+
+
 # ----------------------------------------------------------------------------- summary
 
 
@@ -717,32 +769,35 @@ def _summary_table(outcomes: list[StudyOutcome]) -> list[str]:
     return ["## Summary", "", _md_table(df), ""]
 
 
-def run_all(which: Optional[set[str]] = None) -> dict[str, str]:
+STUDIES = {
+    "01": lambda ds: study_microstructure(),
+    "02": study_mean_reversion,
+    "02b": study_crypto_maker_entry,
+    "03": study_trend,
+    "04": study_breakouts,
+    "05": study_seasonality,
+    "06": study_stat_arb,
+    "07": study_jev_gate,
+    "08": study_meta_allocator,
+}
+
+
+def run_all(which: Optional[set[str]] = None, studies: Optional[Sequence[str]] = None) -> dict[str, str]:
+    """`which` filters data sets ({"btc","spx","c"}); `studies` filters study numbers."""
     REPORT_DIR.mkdir(exist_ok=True)
     datasets = load_datasets(which)
     t0 = time.time()
     out = {}
-    out["01"] = study_microstructure()
-    print(f"01 done {time.time()-t0:.0f}s")
-    out["02"] = study_mean_reversion(datasets)
-    print(f"02 done {time.time()-t0:.0f}s")
-    out["03"] = study_trend(datasets)
-    print(f"03 done {time.time()-t0:.0f}s")
-    out["04"] = study_breakouts(datasets)
-    print(f"04 done {time.time()-t0:.0f}s")
-    out["05"] = study_seasonality(datasets)
-    print(f"05 done {time.time()-t0:.0f}s")
-    out["06"] = study_stat_arb(datasets)
-    print(f"06 done {time.time()-t0:.0f}s")
-    out["07"] = study_jev_gate(datasets)
-    print(f"07 done {time.time()-t0:.0f}s")
-    out["08"] = study_meta_allocator(datasets)
-    print(f"08 done {time.time()-t0:.0f}s")
+    for num in studies or sorted(STUDIES):
+        out[num] = STUDIES[num](datasets)
+        print(f"{num} done {time.time()-t0:.0f}s", flush=True)
     return out
 
 
 if __name__ == "__main__":  # pragma: no cover
     import sys
 
-    which = set(sys.argv[1:]) or None
-    run_all(which)
+    args = sys.argv[1:]
+    studies = [a for a in args if a in STUDIES] or None
+    which = set(a for a in args if a not in STUDIES) or None
+    run_all(which, studies)

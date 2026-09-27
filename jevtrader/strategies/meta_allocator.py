@@ -113,7 +113,8 @@ class MetaAllocator(Strategy):
                 {"name": "zscore_reversion", "symbols": ["SPY"], "params": {}},
             ],
             "scheme": "inverse_vol",
-            "lookback": 200,  # child return observations used for weights
+            "lookback": 200,  # child P&L samples (every `sample_minutes`) used for weights
+            "sample_minutes": 15,  # cadence at which child virtual P&L is sampled for the return streams
             "rebalance_bars": 50,
             "min_weight": 0.05,
             "max_weight": 0.60,
@@ -143,6 +144,7 @@ class MetaAllocator(Strategy):
         self._child_equity: dict[str, deque] = {c.id: deque(maxlen=int(self.params["lookback"]) + 1) for c in self.children}
         self._last_px: dict[str, float] = {}
         self._bars_seen = 0
+        self._last_sample_ts: Optional[pd.Timestamp] = None
         self._ctx: Optional[StrategyContext] = None
         self.weight_history: list[tuple[pd.Timestamp, dict[str, float]]] = []
 
@@ -169,17 +171,22 @@ class MetaAllocator(Strategy):
         if len(series) < 2 or len(series) < len(self.children):
             return  # keep equal weights until every child has history
         df = pd.DataFrame(series)
-        df = df.loc[:, df.std() > 0]
-        if df.shape[1] < 2:
+        live = df.loc[:, df.std() > 0]
+        idle = [c for c in df.columns if c not in live.columns]  # flat over the window: no risk to budget yet
+        min_w = float(self.params["min_weight"])
+        if live.shape[1] < 2:
             return
         try:
-            w = target_weights(str(self.params["scheme"]), df, min_weight=float(self.params["min_weight"]), max_weight=float(self.params["max_weight"]), cash_buffer_pct=0.0)
+            w = target_weights(str(self.params["scheme"]), live, min_weight=min_w, max_weight=float(self.params["max_weight"]), cash_buffer_pct=0.0)
         except Exception as exc:  # pragma: no cover - defensive: keep previous weights
             ctx.log("meta_allocator: weight estimation failed", error=str(exc))
             return
-        total = float(w.sum()) or 1.0
+        weights = {cid: float(w.get(cid, 0.0)) for cid in live.columns}
+        for cid in idle:
+            weights[cid] = min_w  # keep an idle sleeve alive at the floor so it can trade when its signal returns
+        total = sum(weights.values()) or 1.0
         for cid in self._weights:
-            self._weights[cid] = float(w.get(cid, 0.0)) / total if cid in w.index else 0.0
+            self._weights[cid] = weights.get(cid, 0.0) / total
         self.weight_history.append((ctx.now, dict(self._weights)))
         ctx.log("meta_allocator weights", **{k: round(v, 3) for k, v in self._weights.items()})
 
@@ -206,8 +213,11 @@ class MetaAllocator(Strategy):
         self._last_px[bar.symbol] = bar.close
         self._fanout(bar, ctx, "on_bar")
         self._bars_seen += 1
-        for c in self.children:
-            self._child_equity[c.id].append(self._child_mtm(c))
+        every = pd.Timedelta(minutes=int(self.params.get("sample_minutes", 15)))
+        if self._last_sample_ts is None or ctx.now - self._last_sample_ts >= every:
+            self._last_sample_ts = ctx.now
+            for c in self.children:
+                self._child_equity[c.id].append(self._child_mtm(c))
         if self._bars_seen % int(self.params["rebalance_bars"]) == 0:
             self._reestimate_weights(ctx)
 

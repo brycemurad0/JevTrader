@@ -152,7 +152,7 @@ def backtest(
     typer.echo(f"report: {out / base}.html")
 
 
-def _run_trading(strategy: str, symbols: list[str], params: Optional[str], mode: TradingMode, dashboard: bool, port: int, shadow: Optional[list[str]] = None) -> None:
+def _run_trading(strategy: str, symbols: list[str], params: Optional[str], mode: TradingMode, dashboard: bool, port: int, shadow: Optional[list[str]] = None, record: bool = False) -> None:
     from jevtrader.core.fees import default_fees
     from jevtrader.core.registry import get
     from jevtrader.execution.alpaca_broker import AlpacaBroker
@@ -192,7 +192,14 @@ def _run_trading(strategy: str, symbols: list[str], params: Optional[str], mode:
         from jevtrader.dashboard.state import DashboardState
 
         state = DashboardState()
-    runner = LiveRunner([strat], broker, streams, _risk_manager(), jev=advisor, runs_dir=settings.runs_dir, dashboard_state=state)
+    strats = [strat]
+    if record:
+        # Journal real quotes/trades/L2 books so microstructure strategies can be validated offline
+        # (jevtrader.research.record_replay.load_market_events -> Backtester).
+        from jevtrader.research.record_replay import MarketDataRecorder
+
+        strats.append(MarketDataRecorder(symbols, {"dir": str(settings.runs_dir / "market_data")}))
+    runner = LiveRunner(strats, broker, streams, _risk_manager(), jev=advisor, runs_dir=settings.runs_dir, dashboard_state=state)
     typer.echo(f"[{mode.value.upper()}] {strat.id} | decision backend={settings.decision_backend} | journal={settings.runs_dir}")
 
     async def main() -> None:
@@ -226,9 +233,10 @@ def paper(
     dashboard: bool = typer.Option(True),
     port: int = typer.Option(8765),
     shadow: Optional[list[str]] = typer.Option(None, help="extra decision backends to log head-to-head (kev, laya, jev)"),
+    record: bool = typer.Option(True, help="record real quotes/trades/books to runs/market_data for replay"),
 ) -> None:
     """Forward-test on Alpaca PAPER. Journals everything to runs/ for the promotion gate."""
-    _run_trading(strategy, symbol, params, TradingMode.PAPER, dashboard, port, shadow)
+    _run_trading(strategy, symbol, params, TradingMode.PAPER, dashboard, port, shadow, record)
 
 
 @app.command()
