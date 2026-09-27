@@ -152,7 +152,7 @@ def backtest(
     typer.echo(f"report: {out / base}.html")
 
 
-def _run_trading(strategy: str, symbols: list[str], params: Optional[str], mode: TradingMode, dashboard: bool, port: int) -> None:
+def _run_trading(strategy: str, symbols: list[str], params: Optional[str], mode: TradingMode, dashboard: bool, port: int, shadow: Optional[list[str]] = None) -> None:
     from jevtrader.core.fees import default_fees
     from jevtrader.core.registry import get
     from jevtrader.execution.alpaca_broker import AlpacaBroker
@@ -178,7 +178,15 @@ def _run_trading(strategy: str, symbols: list[str], params: Optional[str], mode:
         streams.append(CryptoStream(key, secret, q, crypto))
 
     settings.runs_dir.mkdir(parents=True, exist_ok=True)
-    advisor = make_advisor(settings, mode, decision_log=DecisionLog(settings.runs_dir / "decisions.jsonl"))
+    dlog = DecisionLog(settings.runs_dir / "decisions.jsonl")
+    advisor = make_advisor(settings, mode, decision_log=dlog, backend=settings.decision_backend)
+    if shadow:
+        # Answer with the primary backend; fire identical questions at shadow backends in the
+        # background and log all answers -> head-to-head data for the Jev/Kev/Laya scoreboard.
+        from jevtrader.jev.advisor import ShadowAdvisor
+
+        shadows = {b: make_advisor(settings, mode, backend=b) for b in shadow if b != settings.decision_backend}
+        advisor = ShadowAdvisor(advisor, shadows, decision_log=dlog)
     state = None
     if dashboard:
         from jevtrader.dashboard.state import DashboardState
@@ -217,9 +225,10 @@ def paper(
     params: Optional[str] = typer.Option(None),
     dashboard: bool = typer.Option(True),
     port: int = typer.Option(8765),
+    shadow: Optional[list[str]] = typer.Option(None, help="extra decision backends to log head-to-head (kev, laya, jev)"),
 ) -> None:
     """Forward-test on Alpaca PAPER. Journals everything to runs/ for the promotion gate."""
-    _run_trading(strategy, symbol, params, TradingMode.PAPER, dashboard, port)
+    _run_trading(strategy, symbol, params, TradingMode.PAPER, dashboard, port, shadow)
 
 
 @app.command()
