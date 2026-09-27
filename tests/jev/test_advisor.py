@@ -7,6 +7,7 @@ from typesafe_sdk import TypeSafeAPIConnectionError, TypeSafeAPITimeoutError
 
 from jevtrader.core.broker import TradingMode
 from jevtrader.jev.advisor import JevAdvisor, OfflineJevAdvisor, make_advisor
+from jevtrader.jev.backends import DEFAULT_KEV_BASE_URL, DEFAULT_LAYA_BASE_URL, DecisionBackend
 from jevtrader.jev.log import DecisionLog, read_jsonl
 
 from conftest import FakeClient, choice_answer, make_response, make_settings, noul_answer, score_answer
@@ -213,3 +214,47 @@ def test_make_advisor_accepts_string_or_enum_mode():
     fake_client = FakeClient()
     assert isinstance(make_advisor(settings, "live", client=fake_client), JevAdvisor)
     assert isinstance(make_advisor(settings, TradingMode.LIVE, client=fake_client), JevAdvisor)
+
+
+def test_make_advisor_decision_backend_env_selects_kev(monkeypatch):
+    monkeypatch.setenv("DECISION_BACKEND", "kev")
+    monkeypatch.delenv("KEV_BASE_URL", raising=False)
+    settings = make_settings(typesafe_api_key="")  # no Jev key needed at all for a local backend
+    adv = make_advisor(settings, "paper")
+    assert isinstance(adv, JevAdvisor)
+    assert adv._client._config.base_url == DEFAULT_KEV_BASE_URL.rstrip("/")
+    adv.close()
+
+
+def test_make_advisor_decision_backend_env_selects_laya(monkeypatch):
+    monkeypatch.setenv("DECISION_BACKEND", "laya")
+    monkeypatch.delenv("LAYA_BASE_URL", raising=False)
+    settings = make_settings(typesafe_api_key="")
+    adv = make_advisor(settings, "live")
+    assert isinstance(adv, JevAdvisor)
+    assert adv._client._config.base_url == DEFAULT_LAYA_BASE_URL.rstrip("/")
+    adv.close()
+
+
+def test_make_advisor_explicit_backend_overrides_env(monkeypatch):
+    monkeypatch.setenv("DECISION_BACKEND", "kev")
+    settings = make_settings(typesafe_api_key="")
+    adv = make_advisor(settings, "paper", backend=DecisionBackend.OFFLINE)
+    assert isinstance(adv, OfflineJevAdvisor)
+
+
+def test_make_advisor_decision_backend_offline_env(monkeypatch):
+    monkeypatch.setenv("DECISION_BACKEND", "offline")
+    settings = make_settings(typesafe_api_key="secret")  # even with a real key, offline wins
+    adv = make_advisor(settings, "paper")
+    assert isinstance(adv, OfflineJevAdvisor)
+
+
+def test_make_advisor_unset_decision_backend_still_prefers_jev_when_keyed(monkeypatch):
+    """Backward compatibility: with $DECISION_BACKEND unset, behavior is unchanged from before
+    backends.py existed -- a real Jev key + paper/live mode gets a real JevAdvisor."""
+    monkeypatch.delenv("DECISION_BACKEND", raising=False)
+    settings = make_settings(typesafe_api_key="secret")
+    fake_client = FakeClient()
+    adv = make_advisor(settings, "paper", client=fake_client)
+    assert isinstance(adv, JevAdvisor)
