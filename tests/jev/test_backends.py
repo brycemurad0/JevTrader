@@ -105,6 +105,15 @@ def test_make_client_explicit_model_and_timeout_override():
         client.close()
 
 
+def test_make_client_explicit_base_url_overrides_env(monkeypatch):
+    monkeypatch.setenv("KEV_BASE_URL", "http://env-default:8009")
+    client = make_client("kev", base_url="http://explicit-override:9999")
+    try:
+        assert client._config.base_url == "http://explicit-override:9999"
+    finally:
+        client.close()
+
+
 def test_make_client_async_variant():
     from typesafe_sdk import AsyncTypeSafeClient
 

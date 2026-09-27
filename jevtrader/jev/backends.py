@@ -105,6 +105,7 @@ def make_client(
     model: Optional[str] = None,
     timeout: Optional[float] = None,
     api_key: Optional[str] = None,
+    base_url: Optional[str] = None,
     is_async: bool = False,
     **client_kwargs: Any,
 ) -> Any:
@@ -115,6 +116,10 @@ def make_client(
     - `kev` / `laya`: `$KEV_BASE_URL` / `$LAYA_BASE_URL` (defaulting to the servers' own default
       ports, 8009 / 8000), keyed by `$LOCAL_MODEL_API_KEY` or a harmless local placeholder.
     - `offline` is not valid here -- raises `ValueError` (use `OfflineJevAdvisor` in-process).
+
+    `base_url`, if given, overrides the env-derived default for `kev`/`laya` (or the SDK
+    default for `jev`) -- e.g. `scripts/finetune/scoreboard.py --kev http://gpu-box:8009`
+    pointing at a specific server for one run without touching `$KEV_BASE_URL`.
     """
     backend = DecisionBackend.coerce(backend)
     if backend is DecisionBackend.OFFLINE:
@@ -126,9 +131,9 @@ def make_client(
         "api_key": _api_key_for(backend, settings=settings, api_key=api_key),
         "model": model or _default_model_for(backend, settings=settings),
     }
-    base_url = base_url_for(backend)
-    if base_url is not None:
-        kwargs["base_url"] = base_url
+    resolved_base_url = base_url if base_url is not None else base_url_for(backend)
+    if resolved_base_url is not None:
+        kwargs["base_url"] = resolved_base_url
     if timeout is not None:
         kwargs["timeout"] = timeout
     kwargs.update(client_kwargs)
